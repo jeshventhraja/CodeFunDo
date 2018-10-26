@@ -22,6 +22,7 @@ import android.os.*;
 import android.os.Message;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.constraint.ConstraintLayout;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.app.FragmentActivity;
 import android.support.v4.content.ContextCompat;
@@ -44,10 +45,14 @@ import com.google.android.gms.location.LocationServices;
 
 import com.google.android.gms.maps.model.LatLng;
 
+import org.json.JSONObject;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
 import java.util.UUID;
+import java.util.zip.Inflater;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -65,6 +70,7 @@ public class MainActivity extends AppCompatActivity {
     private String TAG = "MainActivity";
     private UUID MY_UUID = UUID.fromString("550a5cf6-70f6-4311-8c86-f5749c440296");
     private String NAME = "helpoffline";
+    private ArrayList<com.helpoffline.helpoffline.Message> messages;
 
     public static final int STATE_NONE = 0;       // we're doing nothing
     public static final int STATE_LISTEN = 1;     // now listening for incoming connections
@@ -92,12 +98,14 @@ public class MainActivity extends AppCompatActivity {
         });
 
         mConversationView = (ListView)findViewById(R.id.messages);
+        messages = new ArrayList<com.helpoffline.helpoffline.Message>();
 
         if(savedInstanceState == null)
         {
             mConversationArrayAdapter = new ArrayAdapter<String>(getApplicationContext(), R.layout.message);
 
             mConversationView.setAdapter(mConversationArrayAdapter);
+//            mConversationView.setEmptyView();
             mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
 
             if (mBluetoothAdapter == null) {
@@ -107,10 +115,10 @@ public class MainActivity extends AppCompatActivity {
             {
                 if(!mBluetoothAdapter.isEnabled())
                 {
-//                    mBluetoothAdapter.enable();
-                    Intent enableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-                    startActivityForResult(enableIntent, 3);
-                    Toast.makeText(getApplicationContext(), "Bluetooth enabled", Toast.LENGTH_SHORT).show();
+                    mBluetoothAdapter.enable();
+//                    Intent enableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+//                    startActivityForResult(enableIntent, 3);
+//                    Toast.makeText(getApplicationContext(), "Bluetooth enabled", Toast.LENGTH_SHORT).show();
 
 //                    Intent discoverableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
 //                    discoverableIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
@@ -140,37 +148,36 @@ public class MainActivity extends AppCompatActivity {
             if (resultCode == RESULT_OK) {
 
                 Log.d("on result","msg: " + data.getStringExtra("message") );
-
-                String returnString = data.getStringExtra("message");
-                broadcastMessage(returnString);
+                com.helpoffline.helpoffline.Message temp = new com.helpoffline.helpoffline.Message(data.getStringExtra("message"), mBluetoothAdapter.getName());
+                messages.add(temp);
+                broadcastMessage(temp);
 
             }
         }
     }
 
-    void broadcastMessage(String msg)
-    {
+    void broadcastMessage(com.helpoffline.helpoffline.Message msg) {
         Log.d("BroadcastMessage: ", "msg: " + msg );
-        if(msg != "")
+        if(msg.message != "")
         {
             for (int i = 0;i<numConnections;i+=1)
             {
-                mConnectedThread[i].write(msg.getBytes());
+                mConnectedThread[i].write(msg.messageToJson().toString().getBytes());
             }
         }
     }
 
-    void broadcastMessage(String msg, int id)
-    {
-        if(msg != "")
+    void broadcastMessage(com.helpoffline.helpoffline.Message msg, int id) {
+        if(msg.message != "")
         {
             for (int i = 0;i<numConnections;i+=1)
             {
                 if(i!=id)
-                    mConnectedThread[i].write(msg.getBytes());
+                    mConnectedThread[i].write(msg.messageToJson().toString().getBytes());
             }
         }
     }
+
     void startConnecting() {
         Log.d("startConnecting", "startConnecting");
 
@@ -272,6 +279,13 @@ public class MainActivity extends AppCompatActivity {
             switch (msg.what){
                 case Constants.MESSAGE_WRITE:
                     mConversationArrayAdapter.add(msg.getData().getString("deviceName")+": "+msg.getData().getString("message"));
+                    if(mConversationArrayAdapter.getCount()>0)
+                    {
+                        ConstraintLayout layout = (ConstraintLayout)findViewById(R.id.clayout);
+                        layout.setBackground(ContextCompat.getDrawable(getApplicationContext(), R.mipmap.background_blurred));
+                    }
+                    com.helpoffline.helpoffline.Message temp = new com.helpoffline.helpoffline.Message(msg.getData().getString("message"), msg.getData().getString("deviceName"));
+                    messages.add(temp);
                     break;
             }
 
@@ -430,27 +444,35 @@ public class MainActivity extends AppCompatActivity {
                 try {
                     // Read from the InputStream
                     bytes = mmInStream.read(buffer);
-
-                    Bundle bundle = new Bundle();
-                    bundle.putString("deviceName",deviceName);
-                    bundle.putString("message",new String(buffer));
-                    Message msg = handler.obtainMessage(Constants.MESSAGE_WRITE);
-                    msg.setData(bundle);
-                    handler.sendMessage(msg);
-
-                    ConnectivityManager cm =
-                            (ConnectivityManager)getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
-
-                    NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
-                    boolean isConnected = activeNetwork != null &&
-                            activeNetwork.isConnectedOrConnecting();
-
-                    if(isConnected)
+                    com.helpoffline.helpoffline.Message temp = new com.helpoffline.helpoffline.Message("","");
+                    try {
+                        temp = new com.helpoffline.helpoffline.Message(new JSONObject(new String(buffer)));
+                    } catch (Exception e)
                     {
-                        //TODO: send to server
+                        e.printStackTrace();
                     }
-                    else {
-                        broadcastMessage(new String(buffer), threadID);
+
+                    if(!isDuplicateMessage(temp)) {
+                        Bundle bundle = new Bundle();
+                        bundle.putString("deviceName", deviceName);
+                        bundle.putString("message", new String(buffer));
+                        Message msg = handler.obtainMessage(Constants.MESSAGE_WRITE);
+                        msg.setData(bundle);
+                        handler.sendMessage(msg);
+
+                        ConnectivityManager cm =
+                                (ConnectivityManager) getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+
+                        NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
+                        boolean isConnected = activeNetwork != null &&
+                                activeNetwork.isConnectedOrConnecting();
+
+                        if (isConnected) {
+                            //TODO: send to server
+                        } else {
+
+
+                        }
                     }
 
                 } catch (IOException e) {
@@ -482,6 +504,17 @@ public class MainActivity extends AppCompatActivity {
                 Log.e(TAG, "close() of connect socket failed", e);
             }
         }
+    }
+
+    Boolean isDuplicateMessage(com.helpoffline.helpoffline.Message msg) {
+        for (int i =0;i<messages.size();i+=1)
+        {
+            if(msg.id == messages.get(i).id)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     void askLocationPermission() {
