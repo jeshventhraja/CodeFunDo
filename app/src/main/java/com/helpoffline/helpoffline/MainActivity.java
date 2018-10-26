@@ -11,6 +11,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.Criteria;
 import android.location.Location;
@@ -38,6 +39,13 @@ import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.android.volley.Request;
+import com.android.volley.RequestQueue;
+import com.android.volley.Response;
+import com.android.volley.VolleyError;
+import com.android.volley.VolleyLog;
+import com.android.volley.toolbox.JsonObjectRequest;
+import com.android.volley.toolbox.Volley;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.location.LocationRequest;
@@ -45,6 +53,7 @@ import com.google.android.gms.location.LocationServices;
 
 import com.google.android.gms.maps.model.LatLng;
 
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
@@ -78,6 +87,8 @@ public class MainActivity extends AppCompatActivity {
     public static final int STATE_CONNECTED = 3;  // now connected to a remote device
     int REQUEST_ACCESS_COARSE_LOCATION = 10;
     int SEND_MESSAGE_ACTIVITY_REQUEST_CODE = 20;
+
+    private RequestQueue mRequestQueue;
 
     Button sendButton;
 
@@ -116,9 +127,9 @@ public class MainActivity extends AppCompatActivity {
                 if(!mBluetoothAdapter.isEnabled())
                 {
                     mBluetoothAdapter.enable();
-//                    Intent enableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-//                    startActivityForResult(enableIntent, 3);
-//                    Toast.makeText(getApplicationContext(), "Bluetooth enabled", Toast.LENGTH_SHORT).show();
+                    Intent enableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+                    startActivityForResult(enableIntent, 3);
+                    Toast.makeText(getApplicationContext(), "Bluetooth enabled", Toast.LENGTH_SHORT).show();
 
 //                    Intent discoverableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
 //                    discoverableIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
@@ -139,6 +150,25 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    public RequestQueue getRequestQueue() {
+        // lazy initialize the request queue, the queue instance will be
+        // created when it is accessed for the first time
+        if (mRequestQueue == null) {
+            mRequestQueue = Volley.newRequestQueue(getApplicationContext());
+        }
+
+        return mRequestQueue;
+    }
+
+    public <T> void addToRequestQueue(Request<T> req) {
+        // set the default tag if tag is empty
+        req.setTag(TAG);
+
+        VolleyLog.d("Adding request to queue: %s", req.getUrl());
+
+        getRequestQueue().add(req);
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -157,7 +187,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     void broadcastMessage(com.helpoffline.helpoffline.Message msg) {
-        Log.d("BroadcastMessage: ", "msg: " + msg );
+        Log.d("BroadcastMessage: ", String.valueOf(numConnections)+"msg: " + msg );
         if(msg.message != "")
         {
             for (int i = 0;i<numConnections;i+=1)
@@ -213,10 +243,10 @@ public class MainActivity extends AppCompatActivity {
                 String deviceName = device.getName();
                 String deviceHardwareAddress = device.getAddress(); // MAC address
 
-                if(device.getBondState() != BluetoothDevice.BOND_BONDED)
-                {
-                    device.createBond();
-                }
+//                if(device.getBondState() != BluetoothDevice.BOND_BONDED)
+//                {
+//                    device.createBond();
+//                }
                 connect(device,true);
 
             } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
@@ -282,7 +312,7 @@ public class MainActivity extends AppCompatActivity {
                     if(mConversationArrayAdapter.getCount()>0)
                     {
                         ConstraintLayout layout = (ConstraintLayout)findViewById(R.id.clayout);
-                        layout.setBackground(ContextCompat.getDrawable(getApplicationContext(), R.mipmap.background_blurred));
+                        layout.setBackground(ContextCompat.getDrawable(getApplicationContext(), R.mipmap.background_blurred1));
                     }
                     com.helpoffline.helpoffline.Message temp = new com.helpoffline.helpoffline.Message(msg.getData().getString("message"), msg.getData().getString("deviceName"));
                     messages.add(temp);
@@ -431,11 +461,15 @@ public class MainActivity extends AppCompatActivity {
             mmInStream = tmpIn;
             mmOutStream = tmpOut;
 //            mState = STATE_CONNECTED;
-            write("hi".getBytes());
+
         }
 
         public void run() {
             Log.i(TAG, "BEGIN mConnectedThread");
+
+//            Toast.makeText(MainActivity.this, "Connected to "+deviceName, Toast.LENGTH_SHORT).show();
+
+
             byte[] buffer = new byte[1024];
             int bytes;
 
@@ -444,15 +478,19 @@ public class MainActivity extends AppCompatActivity {
                 try {
                     // Read from the InputStream
                     bytes = mmInStream.read(buffer);
+                    Log.d("Message rec", "13eksfakd");
+
                     com.helpoffline.helpoffline.Message temp = new com.helpoffline.helpoffline.Message("","");
+                    Log.d("Message rec", temp.message);
+
                     try {
-                        temp = new com.helpoffline.helpoffline.Message(new JSONObject(new String(buffer)));
+                        temp = new com.helpoffline.helpoffline.Message(new JSONObject("{"+new String(buffer)+"}"));
                     } catch (Exception e)
                     {
                         e.printStackTrace();
                     }
 
-                    if(!isDuplicateMessage(temp)) {
+                    if(true) {
                         Bundle bundle = new Bundle();
                         bundle.putString("deviceName", deviceName);
                         bundle.putString("message", new String(buffer));
@@ -469,9 +507,56 @@ public class MainActivity extends AppCompatActivity {
 
                         if (isConnected) {
                             //TODO: send to server
+
+//                            String url = "http://helpoffline.azurewebsites.net/?name="+deviceName+"&msg="+new String(buffer)+"&time="+String.valueOf(temp.id);
+                            String url = "http://helpoffline.azurewebsites.net";
+                            JSONObject jsonObject = new JSONObject();
+                            try {
+                                jsonObject.put("name", temp.deviceName);
+                                jsonObject.put("msg", temp.message);
+                                jsonObject.put("time", String.valueOf(temp.id));
+                            }catch (JSONException e){
+                                Log.e("REG", e.getMessage());
+                                Toast.makeText(getApplicationContext(), "Sent message to server", Toast.LENGTH_SHORT)
+                                        .show();
+                                return;
+                            }
+
+                            JsonObjectRequest request = new JsonObjectRequest(url, jsonObject,
+                                    new Response.Listener<JSONObject>() {
+                                        @Override
+                                        public void onResponse(JSONObject response) {
+                                            Log.i("RES", response.toString());
+                                            try {
+                                                if (response.getBoolean("success")) {
+                                                    Toast.makeText(MainActivity.this, "Successfully sent",
+                                                            Toast.LENGTH_SHORT).show();
+
+                                                } else {
+//                                                    Toast.makeText(LoginActivity.this, response.getString("message"),
+//                                                            Toast.LENGTH_SHORT).show();
+                                                }
+                                            } catch (JSONException e) {
+                                                Log.e("REG", e.getMessage());
+//                                                Toast.makeText(LoginActivity.this, "Some error occurred.", Toast.LENGTH_SHORT)
+//                                                        .show();
+                                            }
+                                        }
+                                    }, new Response.ErrorListener() {
+                                @Override
+                                public void onErrorResponse(VolleyError error) {
+                                    if(getApplicationContext() == null) {
+                                        return;
+                                    }
+//                                    Toast.makeText(getApplicationContext(), "Network Error", Toast.LENGTH_SHORT).show();
+//                                    Log.i("Error.Response", error.toString());
+                                }
+                            });
+
+                            addToRequestQueue(request);
+
                         } else {
-
-
+                            broadcastMessage(temp,threadID);
                         }
                     }
 

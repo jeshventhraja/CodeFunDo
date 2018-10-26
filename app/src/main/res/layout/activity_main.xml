@@ -5,7 +5,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     tools:context="com.helpoffline.helpoffline.MainActivity"
-    android:background="@mipmap/background"
+    android:background="@mipmap/background1"
     android:id="@+id/clayout">
 
     <LinearLayout
